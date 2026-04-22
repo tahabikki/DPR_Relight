@@ -1,6 +1,6 @@
 # DPR Passport Photo Relighting
 
-Fine-tune a deep learning model to automatically correct lighting and remove shadows from passport photos using Spherical Harmonics-based portrait relighting.
+Fine-tune a deep learning model to automatically correct lighting and remove shadows from passport photos.
 
 ---
 
@@ -11,10 +11,7 @@ Fine-tune a deep learning model to automatically correct lighting and remove sha
 ```bash
 # Create virtual environment
 python -m venv .venv
-# Windows:
 .\.venv\Scripts\Activate.ps1
-# Linux/Mac:
-source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -23,78 +20,59 @@ pip install -r requirements.txt
 ### 2. Prepare Data
 
 ```bash
-# Organize your paired images first:
+# Organize paired images:
 # dataset/
 #   ├── input/     (photos with poor lighting)
-#   └── target/    (same photos, well-lit - reference)
+#   └── target/    (same photos, well-lit)
 
-# Split into train/eval (80/20)
+# Split into train/eval
 python data/prepare_splits.py --src dataset --dst dataset_split --seed 42
-```
-
-Expected structure:
-```
-dataset_split/
-├── train/{input,target}/    # 80% of images
-├── eval/{input,target}/     # 20% of images  
-└── train.lst, eval.lst
 ```
 
 ### 3. Train
 
 ```bash
-# Auto-detect GPU
 python scripts/train.py --config configs/finetune_passport.yaml
-
-# Or specify device manually
-python scripts/train.py --config configs/finetune_passport.yaml --device cuda
 ```
-
-**Training output:**
-- `checkpoints/best_model.pth` — best model checkpoint
-- `checkpoints/training_curve.png` — loss curves
 
 ### 4. Inference
 
 ```bash
-# Relight any passport photo
+# Option 1: Skin-aware (RECOMMENDED)
+python scripts/infer_skin.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
+
+# Option 2: Face-aware
+python scripts/infer_face.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
+
+# Option 3: Whole image
 python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
 ```
 
 ---
 
-## How It Works
+## Inference Options
 
-1. **Training**: Model learns to map Luminance (L) channel from bad-lit photos to flat passport lighting using fixed SH coefficients
-2. **Inference**: Input is split into L,a,b channels → L is relit → recombined with original a,b (colors preserved)
+| Script | What it processes | Best for |
+|--------|----------------|---------|
+| `infer_skin.py` | Only skin pixels (44%) | **Best** - preserves hair, eyes, background |
+| `infer_face.py` | Face rectangle + neck | Simple, fast |
+| `infer.py` | Whole image | Quick testing |
 
-**Key improvements:**
-- Uses L channel only (not RGB) to match pretrained model architecture
-- Fixed flat passport SH lighting (no fake estimation)
-- Chroma (a,b) preserved from input → natural colors
+**Recommended**: Use `infer_skin.py` - it detects skin using color (YCrCb + HSV + RGB) and only processes actual skin, preserving:
+- Background ✓
+- Hair ✓
+- Eyes ✓
+- Mouth ✓
 
 ---
 
-## Project Structure
+## How It Works
 
-```
-DPR Project/
-├── README.md                       # This file
-├── configs/finetune_passport.yaml  # Training config
-├── data/
-│   ├── prepare_splits.py          # Split dataset
-│   └── dataset.py                # Data loader
-├── dataset/                     # Your paired images
-├── dataset_split/               # Split data
-├── model/                      # Hourglass architectures
-├── scripts/
-│   ├── train.py                # Training
-│   ├── infer.py               # Inference
-│   └── eval.py                # Evaluation
-├── trained_model/              # Pretrained weights
-├── checkpoints/                # Your trained models
-└── requirements.txt
-```
+1. **Training**: Model learns L→L mapping with fixed flat SH
+2. **Inference**: 
+   - Detect skin regions (color-based)
+   - Run DPR only on skin
+   - Blend with original (preserves non-skin areas)
 
 ---
 
@@ -102,50 +80,62 @@ DPR Project/
 
 Edit `configs/finetune_passport.yaml`:
 
-| Parameter | Description | Default |
-|-----------|------------|---------|
-| `model.freeze_encoder` | Freeze backbone for transfer learning | true |
-| `training.learning_rate` | Learning rate | 1e-4 |
-| `training.num_epochs` | Training epochs | 100 |
-| `training.batch_size` | Batch size | 8 |
+| Parameter | Default | Description |
+|-----------|---------|------------|
+| `num_epochs` | 100 | Training epochs |
+| `batch_size` | 8 | Batch size |
+| `learning_rate` | 1e-4 | Learning rate |
+| `freeze_encoder` | true | Freeze backbone |
+
+---
+
+## Project Structure
+
+```
+DPR Project/
+├── README.md
+├── configs/finetune_passport.yaml
+├── requirements.txt
+├── data/
+│   ├── prepare_splits.py
+│   └── dataset.py
+├── utils/
+│   ├── skin_mask.py      # Color-based skin detection
+│   └── face_mask.py   # Face detection
+├── scripts/
+│   ├── train.py
+│   ├── infer.py        # Whole image
+│   ├── infer_face.py  # Face detection
+│   └── infer_skin.py # Skin detection (BEST)
+├── model/
+├── dataset/
+├── dataset_split/
+├── trained_model/
+└── checkpoints/
+```
 
 ---
 
 ## Troubleshooting
 
-### Training produces artifacts/blurry output
-
-**Cause**: Using wrong checkpoint or old data format
-
-**Solution**:
-```bash
-# Delete old checkpoints
-rmdir /S /Q checkpoints
-
-# Retrain fresh
-python scripts/train.py --config configs/finetune_passport.yaml
-```
-
-### Inference colors look wrong
-
-**Cause**: Old infer.py version
-
-**Solution**: Ensure you're using the latest version with LAB recombination (check for `cv2.COLOR_LAB2RGB` in infer.py)
-
 ### CUDA out of memory
-
-**Solution**: Decrease batch size in config:
 ```yaml
 training:
-  batch_size: 4
+  batch_size: 4  # Reduce
 ```
+
+### Face not detected
+Use `infer_skin.py` - works without face detection
+
+### Skin detection too aggressive/conservative
+Edit `utils/skin_mask.py` - adjust color ranges
 
 ---
 
 ## Reference
 
-- **Original Paper**: [Deep Single Portrait Image Relighting](https://zhhoper.github.io/dpr.html) (ICCV 2019)
-- **Original Code**: [zhhoper/DPR](https://github.com/zhhoper/DPR)
+- **Paper**: [Deep Single Portrait Image Relighting](https://zhhoper.github.io/dpr.html)
+- **Code**: [zhhoper/DPR](https://github.com/zhhoper/DPR)
 
 ---
 
