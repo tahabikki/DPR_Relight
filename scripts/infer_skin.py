@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Skin-Aware Inference - FIXED VERSION
+Skin-Aware Inference - WITH CLAHE SHADOW PRE-PROCESSING
 
 Key fixes:
-1. Feed FULL L to model (not zeros outside skin) - DPR was trained on full portraits
-2. Use feathered mask for smooth blending at edges
+1. CLAHE on L channel before DPR (softens hard shadows)
+2. Feed FULL L to DPR  
+3. Feathered mask for smooth blending
 """
 
 import argparse
@@ -49,8 +50,14 @@ def load_model(checkpoint_path, model_variant, device):
     return model
 
 
-def relight_skin_fixed(image_path, checkpoint_path, model_variant="512", 
-                      device=None, model_size=512):
+def apply_clahe(l_channel, clip_limit=2.0, tile_size=8):
+    """Apply CLAHE to reduce shadow contrast."""
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
+    return clahe.apply(l_channel)
+
+
+def relight_with_clahe(image_path, checkpoint_path, model_variant="512", 
+                       device=None, model_size=512):
     if device is None:
         device, _ = detect_device()
 
@@ -71,13 +78,17 @@ def relight_skin_fixed(image_path, checkpoint_path, model_variant="512",
     # Convert to Lab
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-    L = lab[:, :, 0].astype(np.float32) / 255.0
+    L = lab[:, :, 0].astype(np.uint8)  # CLAHE needs uint8
     a_orig = lab[:, :, 1]
     b_orig = lab[:, :, 2]
 
-    # FIX #1: Feed FULL L to DPR (not zeros outside skin!)
-    # DPR was trained on full portraits, not masked images
-    L_model = cv2.resize(L, (model_size, model_size), interpolation=cv2.INTER_AREA)
+    # FIX #1: Apply CLAHE to L channel (softens hard shadows!)
+    print("[CLAHE] Reducing shadow contrast...")
+    L_clahe = apply_clahe(L, clip_limit=2.0, tile_size=8)
+    L_clahe = L_clahe.astype(np.float32) / 255.0
+
+    # Resize for model
+    L_model = cv2.resize(L_clahe, (model_size, model_size), interpolation=cv2.INTER_AREA)
     
     L_tensor = torch.from_numpy(L_model[None, None, ...]).float().to(device)
     sh_tensor = torch.from_numpy(FLAT_PASSPORT_SH).float().reshape(1, 9, 1, 1).to(device)
@@ -85,7 +96,7 @@ def relight_skin_fixed(image_path, checkpoint_path, model_variant="512",
     print("[Model] Loading...")
     model = load_model(checkpoint_path, model_variant, device)
 
-    print("[Running] DPR on full image...")
+    print("[Running] DPR + CLAHE...")
     with torch.no_grad():
         out_L, _ = model(L_tensor, sh_tensor, 0)
 
@@ -99,16 +110,13 @@ def relight_skin_fixed(image_path, checkpoint_path, model_variant="512",
     rgb_new = cv2.cvtColor(lab_new, cv2.COLOR_LAB2RGB)
     bgr_new = cv2.cvtColor(rgb_new, cv2.COLOR_RGB2BGR)
 
-    # FIX #2: Feather the mask for smooth blending
+    # Feathered mask blend
     mask_float = skin_mask.astype(np.float32) / 255.0
-    
-    # Feather: kernel scales with image (~3-5% of size, odd number)
     k = max(31, (min(orig_h, orig_w) // 25) | 1)
     mask_float = cv2.GaussianBlur(mask_float, (k, k), 0)
-    
     mask_3ch = np.stack([mask_float] * 3, axis=-1)
     
-    # Smooth blend: original + DPR on skin only
+    # Blend
     result = bgr * (1 - mask_3ch) + bgr_new * mask_3ch
     result = np.clip(result, 0, 255).astype(np.uint8)
 
@@ -125,13 +133,13 @@ def main():
     args = parser.parse_args()
 
     print("="*50)
-    print("DPR SKIN RELIGHTING - FIXED")
+    print("DPR + CLAHE SHADOW PRE-PROCESSING")
     print("="*50)
 
     device = torch.device("cuda")
     
     try:
-        result = relight_skin_fixed(args.input, args.checkpoint, args.model_variant, device)
+        result = relight_with_clahe(args.input, args.checkpoint, args.model_variant, device)
     except Exception as e:
         print(f"[ERROR] {e}")
         import traceback

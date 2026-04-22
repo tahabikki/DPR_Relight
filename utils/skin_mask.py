@@ -116,54 +116,18 @@ def create_face_mask_color(
     with_neck: bool = True
 ) -> np.ndarray:
     """
-    Create combined mask (face + neck) using color + face detection.
+    Create combined mask (face + neck) using color detection only.
+    Skip hard rectangles - just use smooth color detection to avoid visible edges.
     """
     h, w = image_bgr.shape[:2]
 
-    # First: skin color mask
+    # Use only soft color-based skin mask, NO hard face detection rectangles
     skin_mask = create_skin_mask_color(image_bgr)
 
-    # Get face detection to constrain the skin region
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
-
-    if len(faces) > 0:
-        # Create face region mask
-        face_mask = np.zeros((h, w), dtype=np.uint8)
-
-        for (x, y, fw, fh) in faces:
-            pad = int(fw * 0.1)
-            x1 = max(0, x - pad)
-            y1 = max(0, y - pad)
-            x2 = min(w, x + fw + pad)
-            y2 = min(h, y + fh + int(fh * 0.3))
-            cv2.rectangle(face_mask, (x1, y1), (x2, y2), 255, -1)
-
-        # Constrain skin to face region
-        skin_mask = cv2.bitwise_and(skin_mask, face_mask)
-
-        # Add neck region below face
-        if with_neck:
-            _, mask_binary = cv2.threshold(skin_mask, 127, 255, cv2.THRESH_BINARY)
-            coords = cv2.findNonZero(mask_binary)
-            if coords is not None:
-                face_bottom = coords[:, 0, 1].max()
-
-                # Add neck rectangle
-                neck_top = face_bottom
-                neck_bottom = min(h, face_bottom + int(h * 0.12))
-                neck_left = int(w * 0.35)
-                neck_right = int(w * 0.65)
-
-                if neck_bottom > neck_top:
-                    neck_mask = np.zeros((h, w), dtype=np.uint8)
-                    cv2.rectangle(neck_mask, (neck_left, neck_top), (neck_right, neck_bottom), 255, -1)
-                    skin_mask = cv2.bitwise_or(skin_mask, neck_mask)
-
-    # Smooth
-    skin_mask = cv2.GaussianBlur(skin_mask, (15, 15), 0)
+    # EXTRA strong feathering to eliminate any visible edge artifacts
+    # Use very large blur kernel
+    k = max(61, (min(h, w) // 15) | 1)
+    skin_mask = cv2.GaussianBlur(skin_mask, (k, k), 0)
 
     return skin_mask
 
