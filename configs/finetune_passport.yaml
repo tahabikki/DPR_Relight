@@ -34,14 +34,14 @@ training:
   num_epochs: 50
   
   # Batch size for training
-  batch_size: 64
+  batch_size: 32
   
   # Batch size for evaluation (can be larger since no gradients)
-  eval_batch_size: 64
+  eval_batch_size: 32
   
   # Number of worker threads for DataLoader
   # Set to 0 on Windows if multiprocessing issues occur
-  num_workers: 0
+  num_workers: 4
   
   # Random seed for reproducibility
   seed: 42
