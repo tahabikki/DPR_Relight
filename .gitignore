@@ -9,6 +9,10 @@ checkpoints/
 *.pt
 *.t7
 
+# Exception: Keep trained models in git for deployment
+!trained_model/
+!trained_model/*.t7
+
 # Virtual environment
 .venv/
 venv/
