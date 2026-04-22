@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Face mask utility using OpenCV Haar Cascade
+Face mask utility - ELLIPSE VERSION
 
-Creates a mask for face + neck skin areas using OpenCV's face detector.
-Faster and no extra dependencies.
+Key fixes:
+1. Uses ellipse instead of rectangle (follows head shape)
+2. Stronger feather (~6% of image) to hide edges
+3. Returns empty mask when no face (keeps original)
 """
 
 import numpy as np
 import cv2
 
 
-# Default cascade path (comes with OpenCV)
 FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 
@@ -20,89 +21,79 @@ def create_face_mask_opencv(
     dilation: int = 20
 ) -> np.ndarray:
     """
-    Create a mask for skin regions (face + neck) using OpenCV.
-    
-    Args:
-        image_bgr: Input image in BGR format
-        with_neck: Include neck region
-        dilation: Mask dilation amount
+    Create soft face+neck mask (ellipse-shaped, feathered).
     
     Returns:
-        mask: [H, W] binary mask (255 = skin, 0 = non-skin)
+        mask: [H, W] uint8 mask (0-255), NOT binary - already feathered
     """
     h, w = image_bgr.shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
-    
-    # Convert to grayscale
+
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    
-    # Load face cascade
     face_cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
-    
+
     if face_cascade.empty():
         print("[Warning] Could not load face cascade")
         return np.ones((h, w), dtype=np.uint8) * 255
-    
-    # Detect faces
+
     faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(60, 60)
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
     )
-    
+
     if len(faces) == 0:
-        print("[Warning] No face detected")
-        return np.ones((h, w), dtype=np.uint8) * 255
-    
+        print("[Warning] No face detected - returning empty mask")
+        return mask  # Empty = keep original
+
     print(f"[Face] Detected {len(faces)} face(s)")
-    
-    # Process each face
+
     for (x, y, fw, fh) in faces:
-        # Face region
-        face_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # Add face rectangle with some padding
-        pad = int(fw * 0.15)
-        x1 = max(0, x - pad)
-        y1 = max(0, y - pad)
-        x2 = min(w, x + fw + pad)
-        y2 = min(h, y + fh + int(fh * 1.1))  # Extend slightly below face
-        
-        cv2.rectangle(face_mask, (x1, y1), (x2, y2), 255, -1)
-        
-        # Add to mask
-        mask = cv2.bitwise_or(mask, face_mask)
-        
-        print(f"  Face at ({x},{y}), size {fw}x{fh}")
-    
-    # Add neck region (below face)
+        # Ellipse center: middle of face box, slightly lowered
+        cx = x + fw // 2
+        cy = y + fh // 2 + int(fh * 0.05)
+
+        # Ellipse axes: wider than face box
+        ax = int(fw * 0.60)
+        ay = int(fh * 0.80)
+
+        cv2.ellipse(
+            mask,
+            center=(cx, cy),
+            axes=(ax, ay),
+            angle=0,
+            startAngle=0,
+            endAngle=360,
+            color=255,
+            thickness=-1,
+        )
+
+    # Neck: ellipse below face
     if with_neck and len(faces) > 0:
-        # Find lowest face bottom
         face_bottom = max(y + fh for (x, y, fw, fh) in faces)
-        
-        # Add neck rectangle below face
-        neck_top = face_bottom
-        neck_bottom = min(h, face_bottom + int(h * 0.15))  # ~15% of image height
-        
-        if neck_bottom > neck_top:
-            neck_left = int(w * 0.35)
-            neck_right = int(w * 0.65)
-            
-            neck_mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.rectangle(neck_mask, (neck_left, neck_top), (neck_right, neck_bottom), 255, -1)
-            
-            mask = cv2.bitwise_or(mask, neck_mask)
-            print(f"  Neck region: ({neck_left},{neck_top}) to ({neck_right},{neck_bottom})")
-    
-    # Dilate for more coverage
+        x_any, _, fw_any, _ = max(faces, key=lambda f: f[2] * f[3])
+        face_center_x = x_any + fw_any // 2
+
+        neck_cy = face_bottom + int(h * 0.06)
+        neck_ax = int(fw_any * 0.35)
+        neck_ay = int(h * 0.09)
+
+        if neck_cy - neck_ay < h:
+            cv2.ellipse(
+                mask,
+                center=(face_center_x, neck_cy),
+                axes=(neck_ax, neck_ay),
+                angle=0, startAngle=0, endAngle=360,
+                color=255, thickness=-1,
+            )
+
+    # Dilation
     if dilation > 0:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation, dilation))
         mask = cv2.dilate(mask, kernel, iterations=1)
-    
-    # Smooth edges
-    mask = cv2.GaussianBlur(mask, (21, 21), 0)
-    
+
+    # STRONG feather - ~6% of image
+    k = max(41, (min(h, w) // 18) | 1)
+    mask = cv2.GaussianBlur(mask, (k, k), 0)
+
     return mask
 
 
@@ -110,26 +101,14 @@ def create_face_mask_opencv(
 create_skin_mask = create_face_mask_opencv
 
 
-# Ensure cascade is available
-def ensure_cascade():
-    """Verify OpenCV cascade is available."""
-    import os
-    cascade_path = cv2.data.haarcascades
-    print(f"[Info] OpenCV cascade path: {cascade_path}")
-    print(f"[Info] Available files: {os.listdir(cascade_path)[:5]}...")
-
-
 if __name__ == "__main__":
-    ensure_cascade()
-    
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True)
+    parser.add_argument("--output", default="mask_visualization.png")
     args = parser.parse_args()
-    
+
     img = cv2.imread(args.image)
     mask = create_face_mask_opencv(img)
-    
-    vis = cv2.bitwise_and(img, img, mask=mask)
-    cv2.imwrite("mask_visualization.png", vis)
-    print("Saved mask_visualization.png")
+    cv2.imwrite(args.output, mask)
+    print(f"Saved {args.output}")

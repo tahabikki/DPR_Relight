@@ -104,8 +104,9 @@ def create_skin_mask_color(
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     clean_mask = cv2.dilate(clean_mask, kernel, iterations=1)
 
-    # Smooth edges
-    clean_mask = cv2.GaussianBlur(clean_mask, (11, 11), 0)
+    # STRONG feather - ~6% of image (fixed for smooth edges!)
+    k = max(41, (min(h, w) // 18) | 1)
+    clean_mask = cv2.GaussianBlur(clean_mask, (k, k), 0)
 
     return clean_mask
 
