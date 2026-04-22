@@ -114,9 +114,9 @@ class PassportRelightDataset(Dataset):
         
         Returns:
             (input_tensor, target_tensor, sh_coefficients)
-            - input_tensor: [1, H, W] (grayscale L channel from LAB)
-            - target_tensor: [3, H, W] (RGB color image)
-            - sh_coefficients: [9, 1, 1] (SH lighting vector)
+            - input_tensor: [1, H, W] (L channel from BAD lighting input)
+            - target_tensor: [1, H, W] (L channel from GOOD lighting target)
+            - sh_coefficients: [9, 1, 1] (fixed flat passport SH lighting)
         """
         input_path, target_path = self.paired_files[idx]
         
@@ -141,25 +141,49 @@ class PassportRelightDataset(Dataset):
         if self.enable_augmentation:
             input_rgb, target_rgb = self._apply_augmentation(input_rgb, target_rgb)
         
-        # Extract L channel (luminance) from input image for the network input
+        # Extract L channel from input (BAD lighting) - this is what the model sees
         input_lab = cv2.cvtColor(input_rgb, cv2.COLOR_RGB2LAB)
-        input_l = input_lab[:, :, 0].astype(np.float32) / 255.0
+        input_l = input_lab[:, :, 0].astype(np.float32) / 255.0  # [H, W]
         
-        # Extract SH coefficients from target image
-        sh_target = self._extract_sh_coefficients(target_rgb)
+        # Extract L channel from target (GOOD lighting) - this is what we want
+        target_lab = cv2.cvtColor(target_rgb, cv2.COLOR_RGB2LAB)
+        target_l = target_lab[:, :, 0].astype(np.float32) / 255.0  # [H, W]
+        
+        # Fixed flat passport lighting SH (no directional shadow)
+        # This creates even, passport-compliant lighting
+        sh_target = self._get_fixed_sh()
         
         # Convert to tensors
         input_tensor = torch.from_numpy(input_l[np.newaxis, ...]).float()  # [1, H, W]
-        
-        target_rgb_normalized = target_rgb.astype(np.float32) / 255.0
-        target_tensor = torch.from_numpy(
-            target_rgb_normalized.transpose(2, 0, 1)  # [H, W, 3] -> [3, H, W]
-        ).float()
+        target_tensor = torch.from_numpy(target_l[np.newaxis, ...]).float()   # [1, H, W]
         
         sh_tensor = torch.from_numpy(sh_target).float()  # [9]
         sh_tensor = sh_tensor.reshape(9, 1, 1)  # [9, 1, 1] for broadcasting
         
         return input_tensor, target_tensor, sh_tensor
+    
+    def _get_fixed_sh(self) -> np.ndarray:
+        """
+        Return fixed flat passport lighting SH coefficients.
+        
+        This creates even, flattering lighting without directional shadows.
+        SH values:
+        - SH[0]: DC (ambient brightness)
+        - SH[1-3]: First-order (directional)
+        - SH[4-8]: Second-order (ambient)
+        """
+        sh = np.zeros(9, dtype=np.float32)
+        sh[0] = 0.7   # Bright but not blown out
+        sh[1] = 0.0   # No vertical gradient
+        sh[2] = 0.0   # No depth gradient
+        sh[3] = 0.0   # No horizontal gradient
+        # Second-order terms (subtle fill)
+        sh[4] = 0.0
+        sh[5] = 0.0
+        sh[6] = 0.1
+        sh[7] = 0.0
+        sh[8] = 0.0
+        return sh
     
     def _apply_augmentation(
         self,

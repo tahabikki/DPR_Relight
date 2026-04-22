@@ -106,47 +106,31 @@ def load_model(checkpoint_path: str, model_variant: str, device: torch.device):
     return model
 
 
+def get_fixed_sh() -> np.ndarray:
+    """
+    Return fixed flat passport lighting SH coefficients.
+    
+    This creates even, flattering lighting without directional shadows.
+    """
+    sh = np.zeros(9, dtype=np.float32)
+    sh[0] = 0.7   # Bright but not blown out
+    sh[1] = 0.0   # No vertical gradient
+    sh[2] = 0.0   # No depth gradient
+    sh[3] = 0.0   # No horizontal gradient
+    sh[4] = 0.0
+    sh[5] = 0.0
+    sh[6] = 0.1
+    sh[7] = 0.0
+    sh[8] = 0.0
+    return sh
+
+
 def estimate_sh_from_image(image_rgb: np.ndarray) -> np.ndarray:
     """
-    Estimate SH coefficients from an RGB image.
-    
-    This uses the same diffuse estimation method as the dataset loader.
-    
-    Args:
-        image_rgb: [H, W, 3] RGB image (0-255)
-    
-    Returns:
-        sh: [9] SH coefficient vector
+    Legacy function - now uses fixed flat SH instead of estimation.
+    Kept for backward compatibility.
     """
-    # Convert to LAB
-    image_lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
-    l_channel = image_lab[:, :, 0].astype(np.float32) / 255.0
-    
-    # Estimate SH from brightness
-    mean_brightness = np.mean(l_channel)
-    std_brightness = np.std(l_channel)
-    
-    sh = np.zeros(9, dtype=np.float32)
-    
-    sh[0] = (mean_brightness - 0.5) * 2.0
-    
-    h_grad = np.mean(np.abs(np.diff(l_channel, axis=0)))
-    sh[1] = h_grad * 0.5
-    sh[2] = -0.1
-    
-    w_grad = np.mean(np.abs(np.diff(l_channel, axis=1)))
-    sh[3] = w_grad * 0.3
-    
-    sh[4] = std_brightness * 0.2
-    sh[5] = std_brightness * 0.1
-    sh[6] = (std_brightness - 0.2) * 0.3
-    sh[7] = w_grad * 0.1
-    sh[8] = (h_grad - w_grad) * 0.1
-    
-    # Clip to valid range
-    sh = np.clip(sh, -1.0, 1.0)
-    
-    return sh
+    return get_fixed_sh()
 
 
 def infer_single_image(
@@ -191,17 +175,19 @@ def infer_single_image(
     image_rgb_resized = cv2.resize(image_rgb, (output_size, output_size))
     print(f"   Resized to: {output_size}x{output_size}")
     
-    # Estimate SH from input image
-    print(f"\n💡 Estimating lighting coefficients from input...")
-    sh = estimate_sh_from_image(image_rgb_resized)
+    # Extract L, a, b channels from input (keep a, b for later recombination)
+    image_lab = cv2.cvtColor(image_rgb_resized, cv2.COLOR_RGB2LAB)
+    input_l = image_lab[:, :, 0].astype(np.float32) / 255.0
+    input_a = image_lab[:, :, 1].astype(np.float32)  # Keep a channel
+    input_b = image_lab[:, :, 2].astype(np.float32)  # Keep b channel
+    
+    # Use fixed flat SH (passport lighting)
+    print(f"\n💡 Using fixed flat passport lighting")
+    sh = get_fixed_sh()
     print(f"   SH coefficients: {sh}")
     
-    # Extract L channel
-    image_lab = cv2.cvtColor(image_rgb_resized, cv2.COLOR_RGB2LAB)
-    l_channel = image_lab[:, :, 0].astype(np.float32) / 255.0
-    
-    # Convert to tensors
-    input_tensor = torch.from_numpy(l_channel[np.newaxis, np.newaxis, ...]).float().to(device)  # [1, 1, H, W]
+    # Convert to tensors (L channel only)
+    input_tensor = torch.from_numpy(input_l[np.newaxis, ...]).float().to(device)  # [1, 1, H, W]
     sh_tensor = torch.from_numpy(sh).float().reshape(1, 9, 1, 1).to(device)  # [1, 9, 1, 1]
     
     # Load model
@@ -213,17 +199,26 @@ def infer_single_image(
     with torch.no_grad():
         output_img, output_sh = model(input_tensor, sh_tensor, 0)
     
-    # Convert output to numpy
-    output_img = torch.clamp(output_img, 0, 1)
-    output_np = output_img[0].cpu().numpy().transpose(1, 2, 0)  # [H, W, 3]
+    # Extract output L channel
+    output_l = output_img[0, 0].cpu().numpy()  # [H, W]
+    output_l = np.clip(output_l * 255, 0, 255).astype(np.uint8)
     
-    # Convert back to original size (if needed)
+    # Recombine with original a, b channels
+    output_lab = np.zeros((output_size, output_size, 3), dtype=np.uint8)
+    output_lab[:, :, 0] = output_l
+    output_lab[:, :, 1] = input_a.astype(np.uint8)
+    output_lab[:, :, 2] = input_b.astype(np.uint8)
+    
+    # Convert LAB back to RGB
+    output_rgb = cv2.cvtColor(output_lab, cv2.COLOR_LAB2RGB)
+    
+    # Convert back to original size
     if (orig_h, orig_w) != (output_size, output_size):
         print(f"   Resizing output back to: {orig_w}x{orig_h}")
-        output_np = cv2.resize(output_np, (orig_w, orig_h))
+        output_rgb = cv2.resize(output_rgb, (orig_w, orig_h))
     
     # Convert to BGR for OpenCV
-    output_bgr = cv2.cvtColor((output_np * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+    output_bgr = cv2.cvtColor(output_rgb, cv2.COLOR_RGB2BGR)
     
     return output_bgr
 
