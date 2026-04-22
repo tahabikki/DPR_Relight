@@ -3,7 +3,7 @@
 Dataset Splitting Script for DPR Passport Photo Fine-tuning
 
 This script reads paired image data from input/ and target/ folders,
-splits it into train/eval/test sets, and creates .lst files compatible
+splits it into train/eval sets, and creates .lst files compatible
 with DPR's training pipeline.
 
 Usage:
@@ -15,6 +15,7 @@ The script:
 - Generates .lst files (one pair per line: input_path<TAB>target_path)
 - Detects and reports orphan files (unmatched input/target pairs)
 - Uses pathlib.Path for Windows compatibility
+- Uses 80% train / 20% eval split; inference is done separately on desired images
 """
 
 import argparse
@@ -47,21 +48,21 @@ def find_paired_files(input_dir: Path, target_dir: Path) -> Tuple[List[str], Lis
 
 def split_dataset(
     paired_files: List[str],
-    train_ratio: float = 0.7,
+    train_ratio: float = 0.8,
     eval_ratio: float = 0.2,
-    test_ratio: float = 0.1,
     seed: int = 42
 ) -> Dict[str, List[str]]:
     """
-    Split paired files into train/eval/test sets.
+    Split paired files into train/eval sets.
     
     Args:
         paired_files: List of basenames (without extension)
-        train_ratio, eval_ratio, test_ratio: Split ratios (should sum to ~1.0)
+        train_ratio: Fraction for training (default: 0.8)
+        eval_ratio: Fraction for evaluation (default: 0.2)
         seed: Random seed for reproducibility
     
     Returns:
-        Dict with keys 'train', 'eval', 'test' mapping to lists of basenames
+        Dict with keys 'train', 'eval' mapping to lists of basenames
     """
     random.seed(seed)
     files_shuffled = paired_files.copy()
@@ -69,12 +70,10 @@ def split_dataset(
     
     n_total = len(files_shuffled)
     n_train = int(n_total * train_ratio)
-    n_eval = int(n_total * eval_ratio)
     
     splits = {
         'train': files_shuffled[:n_train],
-        'eval': files_shuffled[n_train:n_train + n_eval],
-        'test': files_shuffled[n_train + n_eval:]
+        'eval': files_shuffled[n_train:]
     }
     
     return splits
@@ -189,7 +188,7 @@ def print_summary(
     print(f"\nTotal paired images: {paired_count}")
     print(f"  Train:  {counts['train']} ({counts['train']/paired_count*100:.1f}%)")
     print(f"  Eval:   {counts['eval']} ({counts['eval']/paired_count*100:.1f}%)")
-    print(f"  Test:   {counts['test']} ({counts['test']/paired_count*100:.1f}%)")
+    print(f"\nNote: For testing, use scripts/infer.py on individual images")
     
     if orphan_input or orphan_target:
         print("\n⚠ WARNING: Orphan files detected (unpaired):")
@@ -214,7 +213,7 @@ def print_summary(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Split DPR dataset into train/eval/test sets"
+        description="Split DPR dataset into train/eval sets (80/20 split)"
     )
     parser.add_argument(
         "--src",
@@ -231,20 +230,14 @@ def main():
     parser.add_argument(
         "--train-ratio",
         type=float,
-        default=0.7,
-        help="Fraction of data for training (default: 0.7)"
+        default=0.8,
+        help="Fraction of data for training (default: 0.8)"
     )
     parser.add_argument(
         "--eval-ratio",
         type=float,
         default=0.2,
         help="Fraction of data for evaluation (default: 0.2)"
-    )
-    parser.add_argument(
-        "--test-ratio",
-        type=float,
-        default=0.1,
-        help="Fraction of data for testing (default: 0.1)"
     )
     parser.add_argument(
         "--seed",
@@ -296,7 +289,6 @@ def main():
         paired,
         train_ratio=args.train_ratio,
         eval_ratio=args.eval_ratio,
-        test_ratio=args.test_ratio,
         seed=args.seed
     )
     

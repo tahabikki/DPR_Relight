@@ -23,17 +23,16 @@ pip install -r requirements.txt
 ### 2. Prepare Data
 
 ```bash
-# Split your paired images into train/eval/test
+# Split your paired images into train/eval (80/20 split)
 python data/prepare_splits.py --src dataset --dst dataset_split --seed 42
 ```
 
 Expected structure:
 ```
 dataset_split/
-├── train/{input,target}/    # 70% of images
+├── train/{input,target}/    # 80% of images
 ├── eval/{input,target}/     # 20% of images  
-├── test/{input,target}/     # 10% of images
-└── train.lst, eval.lst, test.lst
+└── train.lst, eval.lst
 ```
 
 ### 3. Train
@@ -50,13 +49,10 @@ python scripts/train.py --config configs/finetune_passport.yaml --device cuda
 - `checkpoints/best_model.pth` — best model checkpoint
 - `checkpoints/training_curve.png` — loss curves
 
-### 4. Evaluate & Inference
+### 4. Inference on Your Images
 
 ```bash
-# Evaluate on test set
-python scripts/eval.py --checkpoint checkpoints/best_model.pth --eval-split test
-
-# Run inference on a single image
+# Run inference on images you want to check
 python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
 ```
 
