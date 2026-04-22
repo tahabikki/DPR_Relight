@@ -1,6 +1,6 @@
 # DPR Passport Photo Relighting
 
-Fine-tune a deep learning model to automatically correct lighting and remove shadows from passport photos using deep Spherical Harmonics-based portrait relighting.
+Fine-tune a deep learning model to automatically correct lighting and remove shadows from passport photos using Spherical Harmonics-based portrait relighting.
 
 ---
 
@@ -23,7 +23,12 @@ pip install -r requirements.txt
 ### 2. Prepare Data
 
 ```bash
-# Split your paired images into train/eval (80/20 split)
+# Organize your paired images first:
+# dataset/
+#   ├── input/     (photos with poor lighting)
+#   └── target/    (same photos, well-lit - reference)
+
+# Split into train/eval (80/20)
 python data/prepare_splits.py --src dataset --dst dataset_split --seed 42
 ```
 
@@ -38,7 +43,7 @@ dataset_split/
 ### 3. Train
 
 ```bash
-# Auto-detect GPU (CUDA, Metal, ROCm, or CPU fallback)
+# Auto-detect GPU
 python scripts/train.py --config configs/finetune_passport.yaml
 
 # Or specify device manually
@@ -49,152 +54,24 @@ python scripts/train.py --config configs/finetune_passport.yaml --device cuda
 - `checkpoints/best_model.pth` — best model checkpoint
 - `checkpoints/training_curve.png` — loss curves
 
-### 4. Inference on Your Images
+### 4. Inference
 
 ```bash
-# Run inference on images you want to check
+# Relight any passport photo
 python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
 ```
 
 ---
 
-## Workflow Overview
+## How It Works
 
-The complete pipeline for using this project:
+1. **Training**: Model learns to map Luminance (L) channel from bad-lit photos to flat passport lighting using fixed SH coefficients
+2. **Inference**: Input is split into L,a,b channels → L is relit → recombined with original a,b (colors preserved)
 
-### **Step 1: Prepare Your Data**
-```bash
-# Organize paired images
-# dataset/
-#   ├── input/     (photos with poor lighting)
-#   └── target/    (same photos, well-lit - reference)
-
-# Split into 80% train / 20% eval
-python data/prepare_splits.py --src dataset --dst dataset_split --seed 42
-```
-
-**Output:**
-- `dataset_split/train/` — 80% of paired images for training
-- `dataset_split/eval/` — 20% of paired images for validation during training
-
----
-
-### **Step 2: Fine-tune the Model**
-```bash
-# Train on your data (auto-detects GPU or uses CPU)
-python scripts/train.py --config configs/finetune_passport.yaml
-```
-
-**Output:**
-- `checkpoints/best_model.pth` — best trained model
-- `checkpoints/training_curve.png` — loss graphs showing learning progress
-
----
-
-### **Step 3: Test on Individual Images**
-```bash
-# Once training is done, relight any passport photo you want to test
-python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
-```
-
-**Result:** `relit.jpg` is the same photo with corrected lighting
-
----
-
-## Project Structure
-
-**Key Folders:**
-
-| Folder | Purpose |
-|--------|---------|
-| `data/` | Dataset preparation & utilities |
-| `model/` | Hourglass neural network architectures |
-| `scripts/` | Training, evaluation, and inference |
-| `configs/` | Hyperparameter configuration (YAML) |
-| `trained_model/` | Pretrained model checkpoints (for fine-tuning) |
-| `checkpoints/` | Your training outputs (best model, loss curves) |
-| `dataset_split/` | Your split dataset (created by prepare_splits.py) |
-
----
-
-## Understanding Checkpoints: Pretrained vs Fine-tuned
-
-**Two types of model files you'll encounter:**
-
-### **1. Pretrained Checkpoint** (`trained_model/trained_model_03.t7`)
-- **What it is:** Original DPR model trained on synthetic data
-- **When it's used:** During **training** (to initialize network weights)
-- **What happens:** Training script loads this → fine-tunes it → saves result
-- **For users:** You should already have these in the `trained_model/` folder (included in the repo)
-
-### **2. Fine-tuned Checkpoint** (`checkpoints/best_model.pth`)
-- **What it is:** YOUR trained model (after fine-tuning on passport photos)
-- **When it's created:** After you run `python scripts/train.py` 
-- **When it's used:** During **inference** to relight images
-- **For users:** This is what you use with `scripts/infer.py`
-
-**Visual flow:**
-```
-[Training]
-Pretrained (trained_model/) 
-         ↓
-    Fine-tune
-         ↓
-Fine-tuned model (checkpoints/best_model.pth) ✅
-
-[Inference]
-Fine-tuned model (checkpoints/best_model.pth)
-         ↓
-    Process image
-         ↓
-Relit photo ✅
-```
-
----
-
-## Technical Overview
-
-**DPR (Deep Portrait Relighting)** — Hourglass CNN learns to relight portraits by:
-1. Extracting low-frequency lighting (Spherical Harmonics coefficients)
-2. Applying target lighting via learned decoder
-3. Producing photorealistic relit output
-
-**This project**: Fine-tunes DPR on real passport photo pairs with:
-- ✅ Modern PyTorch 2.1 stack (Python 3.10+)
-- ✅ Cross-platform GPU support (NVIDIA CUDA, Apple Metal, AMD ROCm)
-- ✅ Frozen encoder transfer learning (prevents overfitting on small datasets)
-- ✅ Centralized YAML config (no magic numbers)
-
----
-
-## Dataset Format
-
-Paired training images (input + target):
-
-```
-dataset/
-├── input/          # Photos with poor lighting
-│   ├── photo1.jpg
-│   └── photo2.jpg
-└── target/         # Same photos, well-lit
-    ├── photo1.jpg
-    └── photo2.jpg
-```
-
-**How it works:**
-- Files with the same name are paired (e.g., `photo1.jpg` in input/ with `photo1.jpg` in target/)
-- The script automatically matches pairs and detects orphans
-- The dataset is split: 80% train, 20% eval
-
----
-
-## Configuration
-
-Edit `configs/finetune_passport.yaml` to adjust:
-- `model.freeze_encoder` — true for transfer learning (recommended for small datasets)
-- `training.learning_rate` — 1e-4 for frozen encoder
-- `training.num_epochs` — adjust based on convergence
-- `training.batch_size` — reduce if CUDA OOM errors
+**Key improvements:**
+- Uses L channel only (not RGB) to match pretrained model architecture
+- Fixed flat passport SH lighting (no fake estimation)
+- Chroma (a,b) preserved from input → natural colors
 
 ---
 
@@ -203,138 +80,75 @@ Edit `configs/finetune_passport.yaml` to adjust:
 ```
 DPR Project/
 ├── README.md                       # This file
-├── configs/finetune_passport.yaml  # Training hyperparameters
-├── data/prepare_splits.py          # Dataset splitting script
-├── dataset/                        # Your paired images (input/ + target/)
-├── dataset_split/                  # Split data (created by prepare_splits.py)
-├── model/                          # Hourglass architectures (512×512, 1024×1024)
+├── configs/finetune_passport.yaml  # Training config
+├── data/
+│   ├── prepare_splits.py          # Split dataset
+│   └── dataset.py                # Data loader
+├── dataset/                     # Your paired images
+├── dataset_split/               # Split data
+├── model/                      # Hourglass architectures
 ├── scripts/
-│   ├── train.py                    # Training script
-│   ├── eval.py                     # Evaluation script
-│   └── infer.py                    # Inference script
-├── trained_model/                  # Pretrained checkpoints
-├── checkpoints/                    # Training outputs (best_model.pth, curves, etc.)
-└── archive/                        # Original project reference (not pushed)
+│   ├── train.py                # Training
+│   ├── infer.py               # Inference
+│   └── eval.py                # Evaluation
+├── trained_model/              # Pretrained weights
+├── checkpoints/                # Your trained models
+└── requirements.txt
 ```
+
+---
+
+## Configuration
+
+Edit `configs/finetune_passport.yaml`:
+
+| Parameter | Description | Default |
+|-----------|------------|---------|
+| `model.freeze_encoder` | Freeze backbone for transfer learning | true |
+| `training.learning_rate` | Learning rate | 1e-4 |
+| `training.num_epochs` | Training epochs | 100 |
+| `training.batch_size` | Batch size | 8 |
 
 ---
 
 ## Troubleshooting
 
-### Error: "Pretrained checkpoint not found: trained_model/trained_model_03.t7"
+### Training produces artifacts/blurry output
 
-**Problem:** Training fails because `trained_model/trained_model_03.t7` cannot be found.
+**Cause**: Using wrong checkpoint or old data format
 
-**Solution:** The pretrained checkpoint should be included in the repo, but if missing:
-1. Check that `trained_model/` folder exists: `ls trained_model/`
-2. If empty, download from original DPR repository: [zhhoper/DPR](https://github.com/zhhoper/DPR)
-3. The checkpoint is needed to START training, but only used once at the beginning
+**Solution**:
+```bash
+# Delete old checkpoints
+rmdir /S /Q checkpoints
 
-**Key distinction:**
-- `trained_model/trained_model_03.t7` ← Used during **training** (initialization)
-- `checkpoints/best_model.pth` ← Used during **inference** (your fine-tuned model)
+# Retrain fresh
+python scripts/train.py --config configs/finetune_passport.yaml
+```
 
-### Error: "CUDA out of memory" during training
+### Inference colors look wrong
 
-**Solution:** Reduce batch size in `configs/finetune_passport.yaml`:
+**Cause**: Old infer.py version
+
+**Solution**: Ensure you're using the latest version with LAB recombination (check for `cv2.COLOR_LAB2RGB` in infer.py)
+
+### CUDA out of memory
+
+**Solution**: Decrease batch size in config:
 ```yaml
 training:
-  batch_size: 4          # Try 2 or 1 if still running out of memory
-```
-
-### For inference, use the FINE-TUNED model:
-```bash
-# ✅ Correct (use your fine-tuned model from training)
-python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
-
-# ❌ Wrong (don't use pretrained - it's not fine-tuned yet)
-python scripts/infer.py --checkpoint trained_model/trained_model_03.t7 --input photo.jpg --output relit.jpg
+  batch_size: 4
 ```
 
 ---
 
-## References
+## Reference
 
-- **Original Paper**: [Deep Single Portrait Image Relighting](https://zhhoper.github.io/dpr.html) (Hao Zhou et al., ICCV 2019)
+- **Original Paper**: [Deep Single Portrait Image Relighting](https://zhhoper.github.io/dpr.html) (ICCV 2019)
 - **Original Code**: [zhhoper/DPR](https://github.com/zhhoper/DPR)
 
-# If still not working, reinstall PyTorch with CUDA 13:
-pip uninstall torch torchvision torchaudio -y
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
-```
-
-#### Apple Mac (M1/M2/M3/M4)
-```bash
-# Apple Metal should work automatically with PyTorch 1.12+
-# If not, make sure you're using official Python, not Homebrew
-python -c "import torch; print(torch.backends.mps.is_available())"
-# Should print: True
-
-# If False, reinstall PyTorch for Mac:
-pip uninstall torch torchvision torchaudio -y
-pip install torch torchvision torchaudio
-```
-
-#### AMD GPU (Windows/Linux)
-```bash
-# Verify ROCm installation:
-pip list | grep torch
-# Should show torch with rocm in version
-
-# If missing, install PyTorch with ROCm:
-pip uninstall torch torchvision torchaudio -y
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.7
-```
-
-**Verify GPU is working:**
-```bash
-python check_cuda.py
-```
-
-### CUDA Out of Memory (OOM)
-
-**Error**: `RuntimeError: CUDA out of memory`
-
-**Solutions**:
-1. Reduce `batch_size` in `configs/finetune_passport.yaml` (e.g., 8 → 4)
-2. Use 512×512 model instead of 1024×1024
-3. Enable CPU fallback: `python scripts/train.py --device cpu`
-4. Reduce `image_size` (not recommended; affects quality)
-
-### Dataset Not Found
-
-**Error**: `FileNotFoundError: dataset_split not found`
-
-**Solution**: Run dataset preparation first:
-```bash
-python data/prepare_splits.py --src dataset --dst dataset_split
-```
-
-### Pretrained Checkpoint Not Found
-
-**Error**: `FileNotFoundError: trained_model/trained_model_03.t7 not found`
-
-**Solution**: Ensure you have the original pretrained weights in `trained_model/`. Download from the original DPR repository if needed.
-
-### SSIM Computation Error
-
-**Error**: `ImportError: No module named 'skimage'`
-
-**Solution**: Install scikit-image:
-```bash
-pip install scikit-image==0.22.0
-```
-
 ---
 
-## Questions & Support
-
-For issues with:
-- **Original DPR architecture**: See [zhhoper/DPR](https://github.com/zhhoper/DPR)
-- **This fine-tuning implementation**: Check the troubleshooting section above or review code comments
-
----
-
-**Last Updated**: 2026  
-**Python Version**: 3.10+  
-**PyTorch Version**: 2.1+
+**Last Updated**: 2026
+**Python**: 3.10+
+**PyTorch**: 2.1+
