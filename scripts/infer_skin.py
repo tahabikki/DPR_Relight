@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Skin-Aware Inference - WITH CLAHE SHADOW PRE-PROCESSING
+Skin-Aware Inference - NORMALIZE DIRECTIONAL LIGHT
 
-Key fixes:
-1. CLAHE on L channel before DPR (softens hard shadows)
-2. Feed FULL L to DPR  
-3. Feathered mask for smooth blending
+Fixes:
+1. Proper flat SH (truly ambient, no directional)
+2. Highlight compression before DPR (gives headroom to pull down bright side)
+3. Chromatic correction on lit side (warm cast removal)
+4. Feathered mask for smooth blend
 """
 
 import argparse
@@ -21,7 +22,9 @@ sys.path.insert(0, str(project_root / "utils"))
 
 from skin_mask import create_skin_mask
 
-FLAT_PASSPORT_SH = np.array([0.7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0], dtype=np.float32)
+# FIX 1: Truly flat ambient SH - only DC term, everything else exactly zero
+# 0.5 = neutral brightness (0.7 was too bright)
+FLAT_PASSPORT_SH = np.array([0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
 def detect_device():
@@ -50,14 +53,38 @@ def load_model(checkpoint_path, model_variant, device):
     return model
 
 
-def apply_clahe(l_channel, clip_limit=2.0, tile_size=8):
-    """Apply CLAHE to reduce shadow contrast."""
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_size, tile_size))
-    return clahe.apply(l_channel)
+def compress_highlights(L, knee=0.70, ceiling=0.85):
+    """Soft-knee highlight compression."""
+    out = L.copy()
+    above = L > knee
+    if not np.any(above):
+        return out
+    t = (L[above] - knee) / (1.0 - knee)
+    t = 1.0 - (1.0 - t) ** 2  # ease-out
+    out[above] = knee + t * (ceiling - knee)
+    return out
 
 
-def relight_with_clahe(image_path, checkpoint_path, model_variant="512", 
-                       device=None, model_size=512):
+def correct_lit_side_chroma(L, a, b, lit_start=0.65, lit_full=0.90, strength=0.6):
+    """Pull lit-side chroma toward midtone skin."""
+    skin_mid = (L > 0.35) & (L < lit_start)
+    if skin_mid.sum() < 100:
+        return a, b
+    
+    a_neutral = float(np.median(a[skin_mid]))
+    b_neutral = float(np.median(b[skin_mid]))
+    
+    lit_w = np.clip((L - lit_start) / (lit_full - lit_start), 0, 1).astype(np.float32)
+    lit_w *= strength
+    
+    a_new = a.astype(np.float32) * (1 - lit_w) + a_neutral * lit_w
+    b_new = b.astype(np.float32) * (1 - lit_w) + b_neutral * lit_w
+    
+    return np.clip(a_new, 0, 255).astype(np.uint8), np.clip(b_new, 0, 255).astype(np.uint8)
+
+
+def relight_normalized(image_path, checkpoint_path, model_variant="512",
+                     device=None, model_size=512):
     if device is None:
         device, _ = detect_device()
 
@@ -69,7 +96,6 @@ def relight_with_clahe(image_path, checkpoint_path, model_variant="512",
     orig_h, orig_w = bgr.shape[:2]
     print(f"  Size: {orig_w}x{orig_h}")
 
-    # Create skin mask for blending
     print("[Mask] Detecting skin...")
     skin_mask = create_skin_mask(bgr, with_neck=True)
     skin_pixels = np.count_nonzero(skin_mask)
@@ -78,35 +104,39 @@ def relight_with_clahe(image_path, checkpoint_path, model_variant="512",
     # Convert to Lab
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-    L = lab[:, :, 0].astype(np.uint8)  # CLAHE needs uint8
+    L = lab[:, :, 0].astype(np.float32) / 255.0
     a_orig = lab[:, :, 1]
     b_orig = lab[:, :, 2]
 
-    # FIX #1: Apply CLAHE to L channel (softens hard shadows!)
-    print("[CLAHE] Reducing shadow contrast...")
-    L_clahe = apply_clahe(L, clip_limit=2.0, tile_size=8)
-    L_clahe = L_clahe.astype(np.float32) / 255.0
+    # FIX 2: Compress highlights before DPR
+    print("[Preprocess] Compressing highlights (knee=0.70, ceiling=0.85)...")
+    L_compressed = compress_highlights(L, knee=0.70, ceiling=0.85)
 
-    # Resize for model
-    L_model = cv2.resize(L_clahe, (model_size, model_size), interpolation=cv2.INTER_AREA)
-    
+    # Feed FULL compressed L to DPR
+    L_model = cv2.resize(L_compressed, (model_size, model_size), interpolation=cv2.INTER_AREA)
+
     L_tensor = torch.from_numpy(L_model[None, None, ...]).float().to(device)
     sh_tensor = torch.from_numpy(FLAT_PASSPORT_SH).float().reshape(1, 9, 1, 1).to(device)
 
     print("[Model] Loading...")
     model = load_model(checkpoint_path, model_variant, device)
 
-    print("[Running] DPR + CLAHE...")
+    print("[Running] DPR with flat ambient SH...")
     with torch.no_grad():
         out_L, _ = model(L_tensor, sh_tensor, 0)
 
-    # Get output
     out_L = torch.clamp(out_L, 0.0, 1.0)
     out_L_np = (out_L[0, 0].cpu().numpy() * 255).astype(np.uint8)
     out_L_resized = cv2.resize(out_L_np, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
 
-    # Recombine with original a,b (preserve colors!)
-    lab_new = cv2.merge([out_L_resized, a_orig, b_orig])
+    # FIX 3: Correct chroma on lit side
+    print("[Postprocess] Correcting lit-side chroma...")
+    a_corrected, b_corrected = correct_lit_side_chroma(
+        L, a_orig, b_orig, lit_start=0.65, lit_full=0.90, strength=0.6
+    )
+
+    # Recombine
+    lab_new = cv2.merge([out_L_resized, a_corrected, b_corrected])
     rgb_new = cv2.cvtColor(lab_new, cv2.COLOR_LAB2RGB)
     bgr_new = cv2.cvtColor(rgb_new, cv2.COLOR_RGB2BGR)
 
@@ -115,8 +145,7 @@ def relight_with_clahe(image_path, checkpoint_path, model_variant="512",
     k = max(31, (min(orig_h, orig_w) // 25) | 1)
     mask_float = cv2.GaussianBlur(mask_float, (k, k), 0)
     mask_3ch = np.stack([mask_float] * 3, axis=-1)
-    
-    # Blend
+
     result = bgr * (1 - mask_3ch) + bgr_new * mask_3ch
     result = np.clip(result, 0, 255).astype(np.uint8)
 
@@ -129,17 +158,16 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--model-variant", default="512")
-    parser.add_argument("--model-size", type=int, default=512)
     args = parser.parse_args()
 
-    print("="*50)
-    print("DPR + CLAHE SHADOW PRE-PROCESSING")
-    print("="*50)
+    print("=" * 50)
+    print("DPR - NORMALIZE DIRECTIONAL LIGHT")
+    print("=" * 50)
 
     device = torch.device("cuda")
-    
+
     try:
-        result = relight_with_clahe(args.input, args.checkpoint, args.model_variant, device)
+        result = relight_normalized(args.input, args.checkpoint, args.model_variant, device)
     except Exception as e:
         print(f"[ERROR] {e}")
         import traceback
