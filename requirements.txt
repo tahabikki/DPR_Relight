@@ -23,10 +23,8 @@ tqdm==4.66.1
 # Plotting
 matplotlib==3.8.2
 
-# Advanced image metrics (optional, for better SSIM computation)
+# Advanced image metrics
 scikit-image==0.22.0
 
-# Development (optional)
-# pytest==7.4.3
-# black==23.12.0
-# flake8==6.1.0
+# Face detection
+mediapipe==0.10.9
