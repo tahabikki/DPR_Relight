@@ -130,20 +130,28 @@ def setup_model(config: Dict, device: torch.device):
 
 def freeze_encoder(model):
     """
-    Freeze encoder weights (Hourglass downsampling path).
+    Freeze encoder weights for DPR HourglassNet.
     
-    This is a heuristic: we freeze layers up to the middle of the network.
-    For fine-tuning on limited data, this reduces overfitting risk.
+    The encoder consists of:
+      - pre_conv, pre_bn: initial preprocessing
+      - HG3, HG2, HG1: hourglass blocks (downsampling path)
+    
+    We keep trainable:
+      - HG0: bottleneck (can be partially fine-tuned)
+      - conv_1/2/3, light, output: decoder and new output layer
+    
+    For fine-tuning on limited data (89 batches), freezing the encoder
+    preserves pretrained features and reduces overfitting risk.
     """
-    # Get all named parameters
-    encoder_patterns = ['down', 'maxpool']  # Common patterns in encoder
+    # Encoder layer prefixes to freeze (based on DPR HourglassNet architecture)
+    encoder_prefixes = ['pre_conv', 'pre_bn', 'HG3', 'HG2', 'HG1']
     
     trainable_count = 0
     frozen_count = 0
     
     for name, param in model.named_parameters():
-        # Check if this is likely part of the encoder
-        is_encoder = any(pattern.lower() in name.lower() for pattern in encoder_patterns)
+        # Check if this layer is part of the encoder
+        is_encoder = any(name.startswith(prefix) for prefix in encoder_prefixes)
         
         if is_encoder:
             param.requires_grad = False
@@ -151,7 +159,10 @@ def freeze_encoder(model):
         else:
             trainable_count += 1
     
+    # Print detailed breakdown
     print(f"   Frozen layers: {frozen_count}, Trainable layers: {trainable_count}")
+    print(f"   Frozen: {', '.join(encoder_prefixes)}")
+    print(f"   Trainable: HG0, conv_1/2/3, light, output")
 
 
 def setup_optimizer(model, config: Dict):
