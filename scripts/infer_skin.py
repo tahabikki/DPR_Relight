@@ -134,17 +134,19 @@ def relight_skin_aware(
     rgb_new = cv2.cvtColor(lab_new, cv2.COLOR_LAB2RGB)
     bgr_new = cv2.cvtColor(rgb_new, cv2.COLOR_RGB2BGR)
 
-    # Apply skin mask: only change skin regions
-    # Smooth edges
-    skin_mask_blur = cv2.GaussianBlur(skin_mask, (blend_sigma * 2 + 1, blend_sigma * 2 + 1), 0)
-    skin_mask_3ch = np.stack([skin_mask_blur] * 3, axis=-1).astype(np.float32) / 255.0
+    # Apply skin mask: smooth blend for no visible edges
+    skin_mask_blur = cv2.GaussianBlur(skin_mask, (21, 21), 0)
+    skin_mask_float = skin_mask_blur.astype(np.float32) / 255.0
+    
+    # Expand to 3 channels
+    mask_3ch = np.stack([skin_mask_float] * 3, axis=-1)
 
-    # Blend: original BG + DPR on skin
+    # Smooth blend: original BG + DPR on skin
     original_f = bgr.astype(np.float32) / 255.0
     processed_f = bgr_new.astype(np.float32) / 255.0
 
-    blended = original_f * (1 - skin_mask_3ch) + processed_f * skin_mask_3ch
-    result = (blended * 255).astype(np.uint8)
+    blended = original_f * (1 - mask_3ch) + processed_f * mask_3ch
+    result = np.clip(blended * 255, 0, 255).astype(np.uint8)
 
     return result
 
