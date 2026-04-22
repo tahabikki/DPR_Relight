@@ -1,0 +1,78 @@
+*.pyc
+*.sh
+log_test/
+result_1024
+
+# Training artifacts
+checkpoints/
+*.pth
+*.pt
+*.t7
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Archives (don't commit large files)
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.iso
+*.dmg
+
+# Data & Datasets (use git-lfs or download from source)
+dataset/
+dataset_split/
+*.7z
+*.zip
+
+# Results & Outputs
+result/
+results/
+output/
+outputs/
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Other
+.env
+*.config.local
+local_settings.py
+

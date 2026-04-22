@@ -1,0 +1,187 @@
+# Fine-tuning Configuration for DPR Passport Photo Relighting
+# All hyperparameters and settings are defined here to avoid magic numbers in code
+
+# ==============================================================================
+# MODEL CONFIGURATION
+# ==============================================================================
+model:
+  # Architecture variant to fine-tune: '512' or '1024'
+  # '512': baseline architecture (faster, lower VRAM)
+  # '1024': larger model with feature matching (more details, requires more VRAM)
+  variant: '512'
+  
+  # Whether to freeze the encoder during fine-tuning
+  # True = transfer learning (frozen backbone, train only decoder)
+  # False = train entire model (higher risk of overfitting on small dataset, but more flexible)
+  freeze_encoder: true
+  
+  # Number of base channels in the Hourglass network
+  base_channels: 16
+
+# ==============================================================================
+# TRAINING CONFIGURATION
+# ==============================================================================
+training:
+  # Learning rate for trainable parameters
+  # Frozen encoder: use ~1e-4 for decoder + lighting head
+  # Full model: use lower ~1e-5 to ~1e-4
+  learning_rate: 1.0e-4
+  
+  # Weight decay for L2 regularization
+  weight_decay: 1.0e-5
+  
+  # Number of training epochs
+  num_epochs: 10
+  
+  # Batch size for training
+  batch_size: 8
+  
+  # Batch size for evaluation (can be larger since no gradients)
+  eval_batch_size: 16
+  
+  # Number of worker threads for DataLoader
+  # Set to 0 on Windows if multiprocessing issues occur
+  num_workers: 4
+  
+  # Random seed for reproducibility
+  seed: 42
+  
+  # Whether to use GPU if available; falls back to CPU if False or no GPU
+  use_cuda: true
+
+# ==============================================================================
+# DATA CONFIGURATION
+# ==============================================================================
+data:
+  # Root path to the original paired dataset (input/ and target/ folders)
+  # Leave as null to use default: './dataset'
+  original_dataset_path: null
+  
+  # Path where split dataset will be created
+  split_dataset_path: './dataset_split'
+  
+  # Train/eval/test split ratios (will be normalized to sum to 1.0)
+  train_split: 0.7
+  eval_split: 0.20
+  test_split: 0.10
+  
+  # Input and output image resolution
+  # Model expects 512x512 or 1024x1024 depending on variant
+  image_size: 512
+  
+  # Augmentation settings
+  augmentation:
+    # Horizontal flip probability (safe for frontal faces)
+    horizontal_flip_prob: 0.3
+    
+    # Rotation augmentation: random rotation in [-max_rotation_deg, +max_rotation_deg]
+    # Set to 0 to disable
+    max_rotation_deg: 5
+    
+    # Color jitter: disabled for passport photos (lighting is the feature we're learning)
+    enable_color_jitter: false
+
+# ==============================================================================
+# CHECKPOINT & OPTIMIZATION
+# ==============================================================================
+checkpoint:
+  # Path to original pretrained checkpoint
+  pretrained_checkpoint: './trained_model/trained_model_03.t7'
+  
+  # Directory to save training checkpoints and logs
+  save_dir: './checkpoints'
+  
+  # Save checkpoint every N epochs (0 = never save intermediate, only final)
+  save_interval: 5
+  
+  # Whether to save the best model by eval loss
+  save_best: true
+
+# ==============================================================================
+# EVALUATION CONFIGURATION
+# ==============================================================================
+evaluation:
+  # Metrics to compute: psnr, ssim, lpips
+  # PSNR = Peak Signal-to-Noise Ratio (higher is better, typical 20-50)
+  # SSIM = Structural Similarity Index (higher is better, 0-1)
+  # LPIPS = Learned Perceptual Image Patch Similarity (lower is better)
+  compute_metrics:
+    - psnr
+    - ssim
+    - lpips
+  
+  # Number of random samples to visualize in eval_samples.png
+  num_visual_samples: 16
+  
+  # Frequency of logging (every N batches)
+  log_interval: 10
+
+# ==============================================================================
+# INFERENCE CONFIGURATION
+# ==============================================================================
+inference:
+  # Device to use for inference: 'auto' (GPU if available), 'cuda', or 'cpu'
+  device: 'auto'
+  
+  # Whether to preserve original input resolution in output
+  # If false, output matches image_size above
+  preserve_aspect_ratio: false
+
+# ==============================================================================
+# LIGHTING (SH COEFFICIENTS) EXTRACTION
+# ==============================================================================
+lighting:
+  # Method for extracting SH coefficients from target image
+  # 'intrinsic' = use DPR's intrinsic image decomposition (requires face alignment)
+  # 'diffuse' = estimate from overall image brightness (simpler, more robust)
+  extraction_method: 'diffuse'
+  
+  # Clipping range for SH coefficients to avoid extreme values
+  sh_clip_min: -1.0
+  sh_clip_max: 1.0
+
+# ==============================================================================
+# LOSS CONFIGURATION
+# ==============================================================================
+loss:
+  # Primary loss: L1 (Mean Absolute Error) or L2 (MSE)
+  # L1 tends to produce sharper results, L2 smoother
+  reconstruction_loss: 'l1'
+  
+  # Weight of reconstruction (pixel-space) loss
+  recon_weight: 1.0
+  
+  # Optional: perceptual loss (LPIPS-based) to encourage feature-level similarity
+  # Set weight to 0 to disable
+  perceptual_weight: 0.0
+  
+  # Optional: smoothness regularization on output
+  smoothness_weight: 0.0
+
+# ==============================================================================
+# LOGGING & MONITORING
+# ==============================================================================
+logging:
+  # Whether to log loss curves and training progress
+  enable_logging: true
+  
+  # Path to save training logs and plots
+  log_dir: './checkpoints'
+  
+  # Verbosity: 0=silent, 1=progress bar only, 2=detailed batch logs
+  verbosity: 1
+
+# ==============================================================================
+# NOTES FOR CUSTOMIZATION
+# ==============================================================================
+# 
+# To use a different configuration:
+#   python scripts/train.py --config configs/my_custom_config.yaml
+#
+# Key tuning parameters if training diverges or underfits:
+# - Increase batch_size if you have VRAM (better gradient estimates)
+# - Decrease learning_rate if loss oscillates
+# - Increase num_epochs if validation loss is still decreasing at the end
+# - Set freeze_encoder=false if overfitting to train set (to enable more capacity)
+# - Enable augmentation.enable_color_jitter if dataset is too homogeneous
+#
