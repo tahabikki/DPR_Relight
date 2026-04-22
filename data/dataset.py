@@ -229,58 +229,65 @@ class PassportRelightDataset(Dataset):
     
     def _extract_sh_diffuse(self, target_rgb: np.ndarray) -> np.ndarray:
         """
-        Simple SH extraction based on image brightness distribution.
+        Improved SH extraction for directional lighting.
         
         Approach:
-        1. Convert to LAB color space
-        2. Extract luminance (L channel)
-        3. Fit a simple SH model to the luminance
-        
-        For passport photos with frontal faces, we can assume:
-        - Mostly diffuse reflectance (no specular highlights)
-        - Relatively uniform albedo
-        - Relatively predictable face geometry
-        
-        So the lighting can be estimated from the average illumination.
+        1. Convert to grayscale (luminance)
+        2. Analyze shading gradients to estimate light direction
+        3. Detect shadow regions
+        4. Fit SH coefficients for directional light
         """
-        # Convert to LAB
-        target_lab = cv2.cvtColor(target_rgb, cv2.COLOR_RGB2LAB)
-        l_channel = target_lab[:, :, 0].astype(np.float32) / 255.0
+        # Convert to luminance
+        gray = cv2.cvtColor(target_rgb, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
         
-        # Simple heuristic: SH coefficients based on brightness statistics
-        # The first SH coefficient (DC term) is most important
-        # It represents ambient illumination
+        # Compute gradients in different regions
+        h, w = gray.shape
+        grad_x = np.gradient(gray, axis=1)  # horizontal gradient
+        grad_y = np.gradient(gray, axis=0)  # vertical gradient
         
-        mean_brightness = np.mean(l_channel)
-        std_brightness = np.std(l_channel)
+        # Estimate light direction from gradient field
+        # Positive grad_x = light from right
+        # Negative grad_x = light from left
+        # Positive grad_y = light from below
+        # Negative grad_y = light from above
+        mean_grad_x = np.mean(grad_x)
+        mean_grad_y = np.mean(grad_y)
         
-        # Initialize SH with neutral lighting (slightly dim for passport compliance)
-        # Real SH estimates would require solving an inverse rendering problem
+        # Detect shadow: dark regions with smooth gradients
+        shadow_mask = (gray < 0.3).astype(np.float32)
+        shadow_intensity = np.mean(shadow_mask)
+        
+        # Compute statistics
+        mean_brightness = np.mean(gray)
+        std_brightness = np.std(gray)
+        
+        # Initialize SH coefficients
         sh = np.zeros(9, dtype=np.float32)
         
-        # DC term (0-th order SH): represents overall brightness
-        # Normalize to [-1, 1] range roughly
-        sh[0] = (mean_brightness - 0.5) * 2.0  # Maps [0, 1] -> [-1, 1]
+        # DC term: overall brightness
+        sh[0] = (mean_brightness - 0.5) * 2.0
         
-        # Higher order terms (1st and 2nd order SH):
-        # These represent directional components
-        # Estimate from spatial variance in brightness
+        # First-order terms (directional light)
+        # Map gradients to SH first-order coefficients
+        # SH[1] = Y (vertical, positive = light from above)
+        # SH[2] = Z (depth, positive = toward camera)
+        # SH[3] = X (horizontal, positive = light from right)
+        sh[1] = np.clip(-mean_grad_y * 5, -1, 1)  # Y: vertical component
+        sh[2] = 0.0  # Z: default
+        sh[3] = np.clip(mean_grad_x * 5, -1, 1)  # X: horizontal component
         
-        # Vertical gradient (affects Y-order terms)
-        h_grad = np.mean(np.abs(np.diff(l_channel, axis=0)))
-        sh[1] = h_grad * 0.5  # Y component (vertical illumination)
-        sh[2] = -0.1  # Z component (slight bias)
+        # Second-order terms for ambient
+        sh[4] = mean_grad_x * mean_grad_y * 0.5  # YX
+        sh[5] = -mean_grad_y * 0.2  # YZ
+        sh[6] = std_brightness * 0.3  # 3Z^2 - 1
+        sh[7] = mean_grad_x * 0.2  # XZ
+        sh[8] = (mean_grad_x**2 - mean_grad_y**2) * 0.2  # X^2 - Y^2
         
-        # Horizontal gradient (affects X-order terms)
-        w_grad = np.mean(np.abs(np.diff(l_channel, axis=1)))
-        sh[3] = w_grad * 0.3  # X component (horizontal illumination)
-        
-        # Second-order terms (less critical for simple relighting)
-        sh[4] = std_brightness * 0.2  # YX
-        sh[5] = std_brightness * 0.1  # YZ
-        sh[6] = (std_brightness - 0.2) * 0.3  # 3Z^2 - 1 (dominant 2nd order)
-        sh[7] = w_grad * 0.1  # XZ
-        sh[8] = (h_grad - w_grad) * 0.1  # X^2 - Y^2
+        # Adjust for shadows: reduce first-order terms where shadows detected
+        if shadow_intensity > 0.1:
+            shadow_factor = 1.0 - shadow_intensity * 0.3
+            sh[1] *= shadow_factor
+            sh[3] *= shadow_factor
         
         # Clip to valid range
         sh = np.clip(sh, self.sh_clip_min, self.sh_clip_max)

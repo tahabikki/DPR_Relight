@@ -23,6 +23,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -195,13 +196,29 @@ def setup_optimizer(model, config: Dict):
 def get_loss_fn(config: Dict):
     """Get loss function based on config."""
     loss_type = config['loss']['reconstruction_loss']
+    perceptual_weight = config['loss'].get('perceptual_weight', 0.0)
     
     if loss_type == 'l1':
-        return nn.L1Loss()
+        base_loss = nn.L1Loss()
     elif loss_type == 'l2':
-        return nn.MSELoss()
+        base_loss = nn.MSELoss()
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")
+    
+    # Return combined loss_fn if perceptual_weight > 0
+    if perceptual_weight > 0:
+        def combined_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+            recon = base_loss(pred, target)
+            # Simple perceptual approximation using multi-scale features
+            perc = 0.0
+            for scale in [2, 4]:
+                pred_scaled = F.interpolate(pred, scale_factor=1/scale, mode='bilinear', align_corners=False)
+                target_scaled = F.interpolate(target, scale_factor=1/scale, mode='bilinear', align_corners=False)
+                perc += torch.mean((pred_scaled - target_scaled) ** 2)
+            return recon + perceptual_weight * perc
+        return combined_loss
+    else:
+        return base_loss
 
 
 def train_one_epoch(

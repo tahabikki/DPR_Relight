@@ -157,8 +157,8 @@ loss:
   recon_weight: 1.0
   
   # Optional: perceptual loss (LPIPS-based) to encourage feature-level similarity
-  # Set weight to 0 to disable
-  perceptual_weight: 0.0
+  # Set weight to 0 to disable. Try 0.1 for less painted look
+  perceptual_weight: 0.1
   
   # Optional: smoothness regularization on output
   smoothness_weight: 0.0
