@@ -58,6 +58,65 @@ python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jp
 
 ---
 
+## Workflow Overview
+
+The complete pipeline for using this project:
+
+### **Step 1: Prepare Your Data**
+```bash
+# Organize paired images
+# dataset/
+#   ├── input/     (photos with poor lighting)
+#   └── target/    (same photos, well-lit - reference)
+
+# Split into 80% train / 20% eval
+python data/prepare_splits.py --src dataset --dst dataset_split --seed 42
+```
+
+**Output:**
+- `dataset_split/train/` — 80% of paired images for training
+- `dataset_split/eval/` — 20% of paired images for validation during training
+
+---
+
+### **Step 2: Fine-tune the Model**
+```bash
+# Train on your data (auto-detects GPU or uses CPU)
+python scripts/train.py --config configs/finetune_passport.yaml
+```
+
+**Output:**
+- `checkpoints/best_model.pth` — best trained model
+- `checkpoints/training_curve.png` — loss graphs showing learning progress
+
+---
+
+### **Step 3: Test on Individual Images**
+```bash
+# Once training is done, relight any passport photo you want to test
+python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
+```
+
+**Result:** `relit.jpg` is the same photo with corrected lighting
+
+---
+
+## Project Structure
+
+**Key Folders:**
+
+| Folder | Purpose |
+|--------|---------|
+| `data/` | Dataset preparation & utilities |
+| `model/` | Hourglass neural network architectures |
+| `scripts/` | Training, evaluation, and inference |
+| `configs/` | Hyperparameter configuration (YAML) |
+| `trained_model/` | Pretrained model checkpoints (for fine-tuning) |
+| `checkpoints/` | Your training outputs (best model, loss curves) |
+| `dataset_split/` | Your split dataset (created by prepare_splits.py) |
+
+---
+
 ## Technical Overview
 
 **DPR (Deep Portrait Relighting)** — Hourglass CNN learns to relight portraits by:
@@ -87,12 +146,11 @@ dataset/
     └── photo2.jpg
 ```
 
-```bash
-python data/prepare_splits.py --src dataset --dst dataset_split --seed 42
-```
+**How it works:**
+- Files with the same name are paired (e.g., `photo1.jpg` in input/ with `photo1.jpg` in target/)
+- The script automatically matches pairs and detects orphans
+- The dataset is split: 80% train, 20% eval
 
-This will:
-- ✅ Verify all pairs match
 ---
 
 ## Configuration
