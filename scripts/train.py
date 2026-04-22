@@ -473,7 +473,7 @@ def main():
     # Create dataloaders
     print(f"\n📊 Creating dataloaders...")
     try:
-        train_loader, eval_loader, test_loader = create_dataloaders(
+        train_loader, eval_loader = create_dataloaders(
             split_dir=str(split_dataset_path),
             batch_size=config['training']['batch_size'],
             eval_batch_size=config['training']['eval_batch_size'],
@@ -496,7 +496,6 @@ def main():
     
     print(f"   Train: {len(train_loader)} batches")
     print(f"   Eval: {len(eval_loader)} batches")
-    print(f"   Test: {len(test_loader)} batches")
     
     # Setup optimizer and loss
     optimizer = setup_optimizer(model, config)

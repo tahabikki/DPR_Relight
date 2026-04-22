@@ -298,14 +298,14 @@ def create_dataloaders(
     seed: int = 42,
     device: str = "cpu",
     **kwargs
-) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     """
-    Create train, eval, and test dataloaders.
+    Create train and eval dataloaders (test is handled by infer.py).
     
     Args:
         split_dir: Path to dataset_split directory
         batch_size: Batch size for training
-        eval_batch_size: Batch size for evaluation/testing
+        eval_batch_size: Batch size for evaluation
         num_workers: Number of worker threads for DataLoader
         image_size: Target image size
         enable_augmentation: Whether to augment training data
@@ -314,7 +314,7 @@ def create_dataloaders(
         **kwargs: Additional arguments for PassportRelightDataset
     
     Returns:
-        (train_loader, eval_loader, test_loader)
+        (train_loader, eval_loader)
     """
     # Set seed for reproducibility
     torch.manual_seed(seed)
@@ -340,14 +340,6 @@ def create_dataloaders(
         **kwargs
     )
     
-    test_dataset = PassportRelightDataset(
-        split_dir=split_dir,
-        split_name="test",
-        image_size=image_size,
-        enable_augmentation=False,
-        **kwargs
-    )
-    
     # Create dataloaders
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -355,7 +347,7 @@ def create_dataloaders(
         shuffle=True,  # Shuffle training data
         num_workers=num_workers,
         pin_memory=use_pin_memory
-    )
+)
     
     eval_loader = torch.utils.data.DataLoader(
         eval_dataset,
@@ -365,15 +357,7 @@ def create_dataloaders(
         pin_memory=use_pin_memory
     )
     
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset,
-        batch_size=eval_batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=use_pin_memory
-    )
-    
-    return train_loader, eval_loader, test_loader
+    return train_loader, eval_loader
 
 
 if __name__ == "__main__":
