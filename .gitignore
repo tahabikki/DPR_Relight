@@ -2,6 +2,7 @@
 *.sh
 log_test/
 result_1024
+archive/
 
 # Training artifacts
 checkpoints/
