@@ -488,7 +488,7 @@ def main():
         return False
     
     # Create dataloaders
-    print(f"\n📊 Creating dataloaders...")
+    print(f"\n[Data] Creating dataloaders...")
     try:
         train_loader, eval_loader = create_dataloaders(
             split_dir=str(split_dataset_path),
@@ -497,6 +497,7 @@ def main():
             num_workers=config['training']['num_workers'],
             image_size=config['data']['image_size'],
             enable_augmentation=True,
+            use_skin_mask=True,  # NEW: train only on skin pixels
             seed=seed,
             device=device.type,  # Pass device type to disable pin_memory on CPU
             horizontal_flip_prob=config['data']['augmentation']['horizontal_flip_prob'],

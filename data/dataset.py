@@ -2,7 +2,7 @@
 PyTorch Dataset for DPR Passport Photo Fine-tuning (FIXED VERSION)
 
 KEY FIX (vs previous broken version):
-=====================================
+====================================
 The previous version tried to make DPR predict RGB color from L channel input
 using fake SH coefficients. This was architecturally wrong and produced artifacts.
 
@@ -11,8 +11,10 @@ This version stays faithful to DPR's original design:
   - Target: L channel of the well-lit photo (same person, paired)
   - SH    : FIXED flat passport lighting (not estimated from image)
 
-At inference, we keep the input's a,b chroma and only replace L, so colors
-stay 100% faithful to the original (no hallucination, no colorization).
+NEW: Skin mask support for focused training:
+  - Uses color-based skin detection (YCrCb + HSV + RGB)
+  - Model trains ONLY on skin pixels (not background)
+  - Better results because model focuses on skin lighting only
 """
 
 import cv2
@@ -40,6 +42,55 @@ FLAT_PASSPORT_SH = np.array(
 )
 
 
+# ---------------------------------------------------------------------------
+# Skin detection for training mask (same as utils/skin_mask.py)
+# ---------------------------------------------------------------------------
+def create_skin_mask(image_bgr: np.ndarray, min_area: int = 3000) -> np.ndarray:
+    """Create skin mask using color detection (YCrCb + HSV + RGB)."""
+    h, w = image_bgr.shape[:2]
+
+    # YCrCb skin detection
+    ycrcb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2YCrCb)
+    lower_ycrcb = np.array([0, 128, 65])
+    upper_ycrcb = np.array([255, 180, 145])
+    mask_ycrcb = cv2.inRange(ycrcb, lower_ycrcb, upper_ycrcb)
+
+    # HSV skin detection
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    lower_hsv = np.array([0, 15, 50])
+    upper_hsv = np.array([20, 255, 255])
+    mask_hsv = cv2.inRange(hsv, lower_hsv, upper_hsv)
+
+    # RGB skin rules
+    b, g, r = cv2.split(image_bgr.astype(np.float32))
+    mask_rgb = ((r > 95) & (g > 40) & (b > 20) &
+              ((r - g) > 15) & ((r - b) > 15) &
+              (r > g) & (r > b)).astype(np.uint8) * 255
+
+    # Combine (union)
+    mask = cv2.bitwise_or(mask_ycrcb, mask_hsv)
+    mask = cv2.bitwise_or(mask, mask_rgb)
+
+    # Cleanup
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    # Keep largest region only
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    clean_mask = np.zeros((h, w), dtype=np.uint8)
+    for contour in contours:
+        if cv2.contourArea(contour) >= min_area:
+            cv2.drawContours(clean_mask, [contour], -1, 255, -1)
+
+    # Dilate and smooth
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    clean_mask = cv2.dilate(clean_mask, kernel, iterations=1)
+    clean_mask = cv2.GaussianBlur(clean_mask, (9, 9), 0)
+
+    return clean_mask
+
+
 class PassportRelightDataset(Dataset):
     """
     Paired passport photo dataset for DPR fine-tuning.
@@ -48,6 +99,8 @@ class PassportRelightDataset(Dataset):
         input_L  : [1, H, W]  luminance of the bad-lighting photo (0..1)
         target_L : [1, H, W]  luminance of the good-lighting photo (0..1)
         sh       : [9, 1, 1]  fixed flat passport-lighting SH
+
+    NEW: use_skin_mask=True trains ONLY on skin pixels!
     """
 
     def __init__(
@@ -56,6 +109,7 @@ class PassportRelightDataset(Dataset):
         split_name: str = "train",
         image_size: int = 512,
         enable_augmentation: bool = True,
+        use_skin_mask: bool = True,  # NEW: only train on skin
         horizontal_flip_prob: float = 0.3,
         max_rotation_deg: float = 5.0,
         **_ignored,  # accept extra kwargs silently for backward compat
@@ -64,6 +118,7 @@ class PassportRelightDataset(Dataset):
         self.split_name = split_name
         self.image_size = image_size
         self.enable_augmentation = enable_augmentation
+        self.use_skin_mask = use_skin_mask  # NEW
         self.horizontal_flip_prob = horizontal_flip_prob
         self.max_rotation_deg = max_rotation_deg
 
@@ -112,9 +167,19 @@ class PassportRelightDataset(Dataset):
         if self.enable_augmentation:
             in_rgb, tg_rgb = self._augment(in_rgb, tg_rgb)
 
-        # Extract L channels (this is what DPR actually learns on)
+        # Extract L channels
         in_L = cv2.cvtColor(in_rgb, cv2.COLOR_RGB2LAB)[:, :, 0].astype(np.float32) / 255.0
         tg_L = cv2.cvtColor(tg_rgb, cv2.COLOR_RGB2LAB)[:, :, 0].astype(np.float32) / 255.0
+
+        # Apply skin mask (NEW: train ONLY on skin pixels)
+        if self.use_skin_mask:
+            # Create skin mask from input image
+            skin_mask = create_skin_mask(in_rgb)
+            skin_mask = skin_mask.astype(np.float32) / 255.0  # [0,1]
+
+            # Apply mask to input and target
+            in_L = in_L * skin_mask
+            tg_L = tg_L * skin_mask
 
         # To tensors
         input_tensor = torch.from_numpy(in_L[None, ...]).float()     # [1, H, W]
