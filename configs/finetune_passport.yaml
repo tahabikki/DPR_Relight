@@ -85,10 +85,15 @@ data:
 # CHECKPOINT & OPTIMIZATION
 # ==============================================================================
 checkpoint:
-  # Path to original pretrained checkpoint
+  # Path to PRETRAINED checkpoint (original DPR model - used to initialize weights before fine-tuning)
+  # This should already be in the trained_model/ folder with the repo
+  # IMPORTANT: This is different from the fine-tuned model!
+  # - Pretrained: used during TRAINING (to start with good initial weights)
+  # - Fine-tuned: created AFTER training and used for INFERENCE
   pretrained_checkpoint: './trained_model/trained_model_03.t7'
   
-  # Directory to save training checkpoints and logs
+  # Directory to save FINE-TUNED checkpoints (created after training completes)
+  # - checkpoints/best_model.pth is used for inference
   save_dir: './checkpoints'
   
   # Save checkpoint every N epochs (0 = never save intermediate, only final)

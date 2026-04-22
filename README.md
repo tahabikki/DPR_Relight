@@ -117,6 +117,41 @@ python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jp
 
 ---
 
+## Understanding Checkpoints: Pretrained vs Fine-tuned
+
+**Two types of model files you'll encounter:**
+
+### **1. Pretrained Checkpoint** (`trained_model/trained_model_03.t7`)
+- **What it is:** Original DPR model trained on synthetic data
+- **When it's used:** During **training** (to initialize network weights)
+- **What happens:** Training script loads this → fine-tunes it → saves result
+- **For users:** You should already have these in the `trained_model/` folder (included in the repo)
+
+### **2. Fine-tuned Checkpoint** (`checkpoints/best_model.pth`)
+- **What it is:** YOUR trained model (after fine-tuning on passport photos)
+- **When it's created:** After you run `python scripts/train.py` 
+- **When it's used:** During **inference** to relight images
+- **For users:** This is what you use with `scripts/infer.py`
+
+**Visual flow:**
+```
+[Training]
+Pretrained (trained_model/) 
+         ↓
+    Fine-tune
+         ↓
+Fine-tuned model (checkpoints/best_model.pth) ✅
+
+[Inference]
+Fine-tuned model (checkpoints/best_model.pth)
+         ↓
+    Process image
+         ↓
+Relit photo ✅
+```
+
+---
+
 ## Technical Overview
 
 **DPR (Deep Portrait Relighting)** — Hourglass CNN learns to relight portraits by:
@@ -184,15 +219,44 @@ DPR Project/
 
 ---
 
+## Troubleshooting
+
+### Error: "Pretrained checkpoint not found: trained_model/trained_model_03.t7"
+
+**Problem:** Training fails because `trained_model/trained_model_03.t7` cannot be found.
+
+**Solution:** The pretrained checkpoint should be included in the repo, but if missing:
+1. Check that `trained_model/` folder exists: `ls trained_model/`
+2. If empty, download from original DPR repository: [zhhoper/DPR](https://github.com/zhhoper/DPR)
+3. The checkpoint is needed to START training, but only used once at the beginning
+
+**Key distinction:**
+- `trained_model/trained_model_03.t7` ← Used during **training** (initialization)
+- `checkpoints/best_model.pth` ← Used during **inference** (your fine-tuned model)
+
+### Error: "CUDA out of memory" during training
+
+**Solution:** Reduce batch size in `configs/finetune_passport.yaml`:
+```yaml
+training:
+  batch_size: 4          # Try 2 or 1 if still running out of memory
+```
+
+### For inference, use the FINE-TUNED model:
+```bash
+# ✅ Correct (use your fine-tuned model from training)
+python scripts/infer.py --checkpoint checkpoints/best_model.pth --input photo.jpg --output relit.jpg
+
+# ❌ Wrong (don't use pretrained - it's not fine-tuned yet)
+python scripts/infer.py --checkpoint trained_model/trained_model_03.t7 --input photo.jpg --output relit.jpg
+```
+
+---
+
 ## References
 
 - **Original Paper**: [Deep Single Portrait Image Relighting](https://zhhoper.github.io/dpr.html) (Hao Zhou et al., ICCV 2019)
 - **Original Code**: [zhhoper/DPR](https://github.com/zhhoper/DPR)
-
-# Update GPU driver from nvidia.com
-# Then verify:
-python -c "import torch; print(torch.cuda.is_available())"
-# Should print: True
 
 # If still not working, reinstall PyTorch with CUDA 13:
 pip uninstall torch torchvision torchaudio -y
