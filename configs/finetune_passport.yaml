@@ -41,7 +41,7 @@ training:
   
   # Number of worker threads for DataLoader
   # Set to 0 on Windows if multiprocessing issues occur
-  num_workers: 4
+  num_workers: 0
   
   # Random seed for reproducibility
   seed: 42

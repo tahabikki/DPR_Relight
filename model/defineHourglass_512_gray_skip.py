@@ -180,8 +180,7 @@ class HourglassNet(nn.Module):
         self.conv_3 = nn.Conv2d(self.ncPre, self.ncPre, kernel_size=1, stride=1, padding=0)
         self.bn_3 = nn.BatchNorm2d(self.ncPre)
 
-        # Output 3 channels (RGB) for color relighting (changed from 1 for grayscale)
-        self.output = nn.Conv2d(self.ncPre, 3, kernel_size=1, stride=1, padding=0)
+        self.output = nn.Conv2d(self.ncPre, 1, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x, target_light, skip_count):
         feat = self.pre_conv(x)
