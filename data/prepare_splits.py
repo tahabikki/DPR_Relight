@@ -250,6 +250,17 @@ def main():
         action="store_true",
         help="Use symlinks instead of copying files (saves space, may not work on all systems)"
     )
+    parser.add_argument(
+        "--rm-bg",
+        action="store_true",
+        help="Remove background using Rembg before splitting"
+    )
+    parser.add_argument(
+        "--rm-bg-dir",
+        type=str,
+        default="dataset_no_bg",
+        help="Directory for background-removed images (default: dataset_no_bg)"
+    )
     
     args = parser.parse_args()
     
@@ -272,6 +283,59 @@ def main():
     print(f"\n📂 Source directory: {src_dir}")
     print(f"📂 Destination directory: {dst_dir}")
     print(f"🌱 Random seed: {args.seed}")
+    
+    # Remove background if requested
+    if args.rm_bg:
+        print("\n[INFO] Removing background using Rembg...")
+        try:
+            from rembg import remove
+            import cv2
+            from PIL import Image
+            import numpy as np
+        except ImportError:
+            print("[ERROR] Rembg not installed. Install with: pip install rembg")
+            print("Or run: pip install rembg pillow opencv-python")
+            return False
+        
+        # Process input and target folders
+        no_bg_dir = Path(args.rm_bg_dir).resolve()
+        no_bg_input = no_bg_dir / "input"
+        no_bg_target = no_bg_dir / "target"
+        
+        # Create directories
+        no_bg_input.mkdir(parents=True, exist_ok=True)
+        no_bg_target.mkdir(parents=True, exist_ok=True)
+        
+        # Process input
+        print("  Processing input folder...")
+        for img_path in tqdm(list(input_dir.glob("*.[jJ][pP][gG]")), desc="Input"):
+            try:
+                img = cv2.imread(str(img_path))
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                output = remove(img_rgb)
+                output_bgra = cv2.cvtColor(output, cv2.COLOR_RGBA2BGRA)
+                cv2.imwrite(str(no_bg_input / f"{img_path.stem}.png"), output_bgra)
+            except Exception as e:
+                print(f"  [ERROR] {img_path.name}: {e}")
+        
+        # Process target
+        print("  Processing target folder...")
+        for img_path in tqdm(list(target_dir.glob("*.[jJ][pP][gG]")), desc="Target"):
+            try:
+                img = cv2.imread(str(img_path))
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                output = remove(img_rgb)
+                output_bgra = cv2.cvtColor(output, cv2.COLOR_RGBA2BGRA)
+                cv2.imwrite(str(no_bg_target / f"{img_path.stem}.png"), output_bgra)
+            except Exception as e:
+                print(f"  [ERROR] {img_path.name}: {e}")
+        
+        print(f"\n[OK] Background removed. Using: {no_bg_dir}")
+        
+        # Use background-removed images as source
+        input_dir = no_bg_input
+        target_dir = no_bg_target
+        src_dir = no_bg_dir
     
     # Find paired files
     print("\n🔍 Scanning for paired files...")
